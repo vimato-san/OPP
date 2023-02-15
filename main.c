@@ -5,8 +5,10 @@
 
 
 void printVector(double *A, size_t N) {
+    printf("{");
     for (int i = 0; i < N; i++)
         printf("%.3f, ", A[i]);
+    printf("}\n");
 }
 
 
@@ -33,21 +35,41 @@ void vectorByNum(double *vector, double num, size_t N) {
 
 double* vectorByMatrix(const double *A, const double *x, size_t N, int rank, int size) {
     double *res = (double*)malloc(sizeof(double) * N);
-    for (int i = 0; i < N; i++) {
+    int n_partial = (int)N / size;
+    double *a_partial = (double *) malloc(n_partial * N * sizeof(double));
+    //Each process get equal number of rows to calculate
+    MPI_Scatter(A, n_partial * (int)N, MPI_DOUBLE, a_partial, n_partial * (int)N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    /*printf("Hello from proc - %d\n", rank);
+    printVector(a_partial, n_partial * (int)N);*/
+    double sum;
+    double *res_partial = (double *) malloc(n_partial * sizeof(double));
+
+    for (int i = 0; i < n_partial; i++) {
+        sum = 0;
+        for (int j = 0; j < N; j++)
+            sum += a_partial[i * N + j] * x[j];
+        res_partial[i] = sum;
+    }
+    //printVector(res_partial, n_partial);
+    MPI_Gather(res_partial, n_partial, MPI_DOUBLE, res, n_partial, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    //Calculate remaining rows of matrix
+    for (int i = n_partial * size; i < N; i++) {
         if (rank == 0 && i % size != 0) {
             MPI_Recv(&res[i], 1, MPI_DOUBLE, MPI_ANY_SOURCE,
                          123, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
         if (rank == i % size) {
-            double elem = 0;
+            sum = 0;
             for (int j = 0; j < N; j++)
-                elem += A[i * N + j] * x[j];
+                sum += A[i * N + j] * x[j];
             if (rank != 0) {
-                MPI_Send(&elem,1, MPI_DOUBLE, 0,
+                MPI_Send(&sum,1, MPI_DOUBLE, 0,
                          123, MPI_COMM_WORLD);
             }
             else
-                res[i] = elem;
+                res[i] = sum;
         }
     }
     MPI_Bcast(res, (int)N, MPI_DOUBLE, 0,MPI_COMM_WORLD);
@@ -80,7 +102,7 @@ double vectorAccuracy(double *A, double *x, double *b, size_t N, int rank, int s
 
 int main(int argc, char *argv[]) {
     int size,rank;
-    size_t N = 5;
+    size_t N = 3;
     double A[N*N];
     double b[N];
     double x[N];
