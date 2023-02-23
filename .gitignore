@@ -1,5 +1,2 @@
-*.txt
 .idea/
 cmake-build-debug/
-mpi_test.c
-lab1

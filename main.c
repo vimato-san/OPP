@@ -4,19 +4,19 @@
 #include <math.h>
 
 #define EPSILON 0.00001
-#define TAU 0.01
+#define TAU 0.001
 #define RANK_ROOT 0
 
 
-void printVector(double *A, size_t N) {
+void vector_print(double *A, size_t N) {
     printf("{");
     for (int i = 0; i < N; i++)
         printf("%.3f, ", A[i]);
-    printf("}\n");
+    printf("\b\b}\n");
 }
 
 
-double *vectorCopy(const double *A, size_t N) {
+double *vector_copy(const double *A, size_t N) {
     double *copy = (double *)malloc(sizeof(double) * N);
     for (size_t i = 0; i < N; i++) {
         copy[i] = A[i];
@@ -24,7 +24,8 @@ double *vectorCopy(const double *A, size_t N) {
     return copy;
 }
 
-double normOfVector(const double *A, size_t N) {
+
+double vector_norm(const double *A, size_t N) {
     double sum = 0;
     for (int i = 0; i < N; i++) {
         sum += (A[i] * A[i]);
@@ -33,19 +34,19 @@ double normOfVector(const double *A, size_t N) {
 }
 
 
-void vectorDiff(double *A, const double *B, size_t N) {
+void vector_diff(double *A, const double *B, size_t N) {
     for (int i = 0; i < N; i++)
         A[i] -= B[i];
 }
 
 
-void vectorByScalar(double *vector, double num, size_t N) {
+void vector_mult_scalar(double *vector, double num, size_t N) {
     for (int i = 0; i < N; i++)
         vector[i] *= num;
 }
 
 
-double* vectorByMatrix(const double *A, const double *x, size_t N, int rank, int size) {
+double* vector_mult_matrix(const double *A, const double *x, size_t N, int rank, int size) {
     double *res = (double*)malloc(sizeof(double) * N);
     int n_partial = (int)N / size;
     double *a_partial = (double *) malloc(n_partial * N * sizeof(double));
@@ -61,7 +62,6 @@ double* vectorByMatrix(const double *A, const double *x, size_t N, int rank, int
         res_partial[i] = sum;
     }
     MPI_Gather(res_partial, n_partial, MPI_DOUBLE, res, n_partial, MPI_DOUBLE, RANK_ROOT, MPI_COMM_WORLD);
-
     //Calculate remaining rows of matrix
     for (int i = n_partial * size; i < N; i++) {
         if (rank == 0 && i % size != 0) {
@@ -87,7 +87,7 @@ double* vectorByMatrix(const double *A, const double *x, size_t N, int rank, int
 }
 
 
-void initValues(double *A, double *x, double *b, size_t N) {
+void init_matrices(double *A, double *x, double *b, size_t N) {
     for (int i = 0; i < N; i++) {
         for (int j = 0; j < N; j++)
             if (i == j)
@@ -100,39 +100,44 @@ void initValues(double *A, double *x, double *b, size_t N) {
 }
 
 
-double vectorAccuracy(double *Ax, double *b, size_t N) {
-    double *AxCopy = vectorCopy(Ax, N);
-    vectorDiff(AxCopy, b, N);
-    double res = normOfVector(AxCopy, N) / normOfVector(b, N);
+double vector_accuracy(double *Ax, double *b, size_t N) {
+    double *Ax_copy = vector_copy(Ax, N);
+    vector_diff(Ax_copy, b, N);
+    double res = vector_norm(Ax_copy, N) / vector_norm(b, N);
 
-    free(AxCopy);
+    free(Ax_copy);
     return res;
 }
 
 
 int main(int argc, char *argv[]) {
-    int size,rank;
-    size_t N = 3;
+    int size, rank;
+    size_t N = 1000;
     double A[N*N];
     double b[N];
     double x[N];
-    initValues(A, x, b, N);
-
+    init_matrices(A, x, b, N);
     MPI_Init(&argc,&argv);
     MPI_Comm_size(MPI_COMM_WORLD,&size);
     MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+    double t = MPI_Wtime();
 
-    double *Ax = vectorByMatrix(A, x, N, rank, size);
-    while (vectorAccuracy(Ax, b, N) > EPSILON) {
-        vectorDiff(Ax, b, N);
-        vectorByScalar(Ax, TAU, N);
-        vectorDiff(x, Ax, N);
-        Ax = vectorByMatrix(A, x, N, rank, size);
+    double *Ax = vector_mult_matrix(A, x, N, rank, size);
+    while (vector_accuracy(Ax, b, N) > EPSILON) {
+        vector_diff(Ax, b, N);
+        vector_mult_scalar(Ax, TAU, N);
+        vector_diff(x, Ax, N);
+        Ax = vector_mult_matrix(A, x, N, rank, size);
     }
     free(Ax);
 
     if (rank == 0)
-        printVector(x, N);
+        vector_print(x, N);
+    t = MPI_Wtime() - t;
+
     MPI_Finalize();
+    if (rank == 0)
+        printf("time = %.5f\n", t);
+
     return 0;
 }
