@@ -3,8 +3,8 @@
 #include <mpi.h>
 #include <math.h>
 
-#define SIZE 14000
-#define EPSILON 0.001
+#define SIZE 15000
+#define EPSILON 0.0001
 #define TAU 0.0001
 #define RANK_ROOT 0
 
@@ -48,17 +48,33 @@ void vector_mult_scalar(double *vector, double num, size_t N) {
 
 
 double* vector_mult_matrix(const double *A, const double *x, size_t N, int rank, int size) {
-    double *res = (double*)malloc(sizeof(double) * N);
+    double *res;
+    res = (double *)malloc(sizeof(double) * N);
+    // n_partial для каждого процесса свой
     int n_partial = (int)N / size;
-    double *a_partial = (double*)malloc(sizeof(double) * n_partial * N);
-    double *res_partial = (double *) malloc(sizeof(double) * n_partial);
+    int *send_counts;
+    int *displs;
 
+    if (rank == RANK_ROOT) {
+        send_counts = (int *)malloc(sizeof(int) * size);
+        displs = (int *)malloc(sizeof(int) * size);
+        displs[0] = 0;
+        for (int i = 0; i < size; i++) {
+            send_counts[i] = n_partial * (int)N;
+            if (i < N % size)
+                send_counts[i] += (int)N;
+            if (i > 0)
+                displs[i] = displs[i - 1] + send_counts[i - 1];
+        }
+    }
 
-    //Each process get equal number of rows to calculate
-    MPI_Scatter(A, n_partial * (int)N, MPI_DOUBLE, a_partial, n_partial * (int)N, MPI_DOUBLE, RANK_ROOT, MPI_COMM_WORLD);
-//    vector_print(a_partial, n_partial * (int)N);
-//    vector_print(x_partial, n_partial);
+    if (rank < N % size) {
+        n_partial++;
+    }
+    double *a_partial = (double *)malloc(sizeof(double) * n_partial * N);
+    double *res_partial = (double *)malloc(sizeof(double) * n_partial);
 
+    MPI_Scatterv(A, send_counts, displs, MPI_DOUBLE, a_partial,n_partial * (int)N, MPI_DOUBLE, RANK_ROOT, MPI_COMM_WORLD);
     double sum;
     for (int i = 0; i < n_partial; i++) {
         sum = 0;
@@ -66,21 +82,23 @@ double* vector_mult_matrix(const double *A, const double *x, size_t N, int rank,
             sum += a_partial[i * N + j] * x[j];
         res_partial[i] = sum;
     }
-//    vector_print(res_partial, n_partial);
 
-    MPI_Gather(res_partial, n_partial, MPI_DOUBLE, res, n_partial, MPI_DOUBLE, RANK_ROOT, MPI_COMM_WORLD);
-    /*if (rank == RANK_ROOT)
-        vector_print(res, N);*/
-    //Calculate remaining rows of matrix
-    if (RANK_ROOT == rank) {
-        for (int i = n_partial * size; i < N; i++) {
-            sum = 0;
-            for (int j = 0; j < N; j++)
-                sum += A[i * N + j] * x[j];
-            res[i] = sum;
+    int *recv_counts;
+    if (rank == RANK_ROOT) {
+        recv_counts = (int *)malloc(sizeof(int) * size);
+        for (int i = 0; i < size; i++) {
+            recv_counts[i] = send_counts[i] / (int)N;
+            if (i > 0)
+                displs[i] = displs[i - 1] + recv_counts[i - 1];
         }
     }
+    MPI_Gatherv(res_partial, n_partial, MPI_DOUBLE, res, recv_counts, displs, MPI_DOUBLE, RANK_ROOT, MPI_COMM_WORLD);
     MPI_Bcast(res, (int)N, MPI_DOUBLE, RANK_ROOT,MPI_COMM_WORLD);
+    if (rank == RANK_ROOT) {
+        free(send_counts);
+        free(recv_counts);
+        free(displs);
+    }
     free(res_partial);
     free(a_partial);
     return res;
@@ -123,17 +141,14 @@ int main(int argc, char *argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD,&size);
     MPI_Comm_rank(MPI_COMM_WORLD,&rank);
     double *A;
-    double *b;
-    double *x;
-    b = (double *)malloc(sizeof(double) * N);
-    x = (double *)malloc(sizeof(double) * N);
+    double *b = (double *)malloc(sizeof(double) * N);
+    double *x = (double *)malloc(sizeof(double) * N);
     init_vectors(x, b, N);
     if (rank == RANK_ROOT) {
         A = (double *)malloc(sizeof(double) * N * N);
         init_matrix(A, N);
     }
     double t = MPI_Wtime();
-
     double *Ax = vector_mult_matrix(A, x, N, rank, size);
 
     double accuracy = vector_accuracy(Ax, b, N);
