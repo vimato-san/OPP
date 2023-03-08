@@ -3,7 +3,7 @@
 #include <mpi.h>
 #include <math.h>
 
-#define SIZE 16500
+#define SIZE 15000
 #define EPSILON 0.0001
 #define TAU 0.0001
 #define RANK_ROOT 0
@@ -27,7 +27,7 @@ double vector_norm(const double *vector, size_t vector_size) {
 }
 
 
-void vector_diff(const double *vec_1, const double *vec_2, double *dest, size_t size) {
+void vector_sub(const double *vec_1, const double *vec_2, double *dest, size_t size) {
     for (int i = 0; i < size; i++)
         dest[i] = vec_1[i] - vec_2[i];
 }
@@ -44,6 +44,7 @@ void vector_mult_matrix(const double *vector, const double *matrix, double *resu
     int *send_counts;
     int *displs;
 
+    // Filling arrays for MPI_Scatterv function
     if (rank == RANK_ROOT) {
         send_counts = (int *)malloc(sizeof(int) * size);
         displs = (int *)malloc(sizeof(int) * size);
@@ -60,6 +61,7 @@ void vector_mult_matrix(const double *vector, const double *matrix, double *resu
     if (rank < vector_size % size) {
         n_partial++;
     }
+
     double *a_partial = (double *)malloc(sizeof(double) * n_partial * vector_size);
     double *res_partial = (double *)malloc(sizeof(double) * n_partial);
 
@@ -72,6 +74,7 @@ void vector_mult_matrix(const double *vector, const double *matrix, double *resu
         res_partial[i] = sum;
     }
 
+    // Filling arrays for MPI_Gatherv function
     int *recv_counts;
     if (rank == RANK_ROOT) {
         recv_counts = (int *)malloc(sizeof(int) * size);
@@ -81,6 +84,7 @@ void vector_mult_matrix(const double *vector, const double *matrix, double *resu
                 displs[i] = displs[i - 1] + recv_counts[i - 1];
         }
     }
+    // Collect parts of result vector in root process
     MPI_Gatherv(res_partial, n_partial, MPI_DOUBLE, result, recv_counts, displs, MPI_DOUBLE, RANK_ROOT, MPI_COMM_WORLD);
 
     if (rank == RANK_ROOT) {
@@ -111,10 +115,10 @@ void init_vector(double *x, size_t N) {
 }
 
 
-double vector_accuracy(double *Ax, double *b, size_t N) {
+double vector_accuracy(double *Ax, double *b, double b_norm, size_t N) {
     double *tmp = (double *)malloc(sizeof(double) * N);
-    vector_diff(Ax, b, tmp, N);
-    double res = vector_norm(tmp, N) / vector_norm(b, N);
+    vector_sub(Ax, b, tmp, N);
+    double res = vector_norm(tmp, N) / b_norm;
 
     free(tmp);
     return res;
@@ -133,40 +137,42 @@ int main(int argc, char *argv[]) {
     double *b;
     double *x = (double *)malloc(sizeof(double) * N);
     init_vector(x, N);
+    double b_norm;  // Const norm of vector b
     if (rank == RANK_ROOT) {
         A = (double *)malloc(sizeof(double) * N * N);
         Ax = (double *)malloc(sizeof(double) * N);
         b = (double *)malloc(sizeof(double) * N);
         init_matrix(A, b, N);
+        b_norm = vector_norm(b, N);
     }
+    MPI_Bcast(&b_norm, 1, MPI_DOUBLE, RANK_ROOT, MPI_COMM_WORLD);
+
     double global_time = MPI_Wtime();
     vector_mult_matrix(x, A, Ax, N, rank, size);
-
     double accuracy = BEGIN_ACCURACY;
     while (accuracy > EPSILON) {
         double iteration_time = MPI_Wtime();
         if (rank == RANK_ROOT) {
-            vector_diff(Ax, b, Ax, N);
+            vector_sub(Ax, b, Ax, N);
             vector_mult_scalar(Ax, TAU, Ax, N);
-            vector_diff(x, Ax, x, N);
+            vector_sub(x, Ax, x, N);
         }
         MPI_Bcast(x, (int)N, MPI_DOUBLE, RANK_ROOT, MPI_COMM_WORLD);
+
         vector_mult_matrix(x, A, Ax, N, rank, size);
         iteration_time = MPI_Wtime() - iteration_time;
         if (rank == RANK_ROOT) {
-            accuracy = vector_accuracy(Ax, b, N);
+            accuracy = vector_accuracy(Ax, b, b_norm, N);
             printf("time = %.5f, accuracy = %.10f\n", iteration_time, accuracy);
         }
         MPI_Bcast(&accuracy, 1, MPI_DOUBLE, RANK_ROOT, MPI_COMM_WORLD);
     }
 
     global_time = MPI_Wtime() - global_time;
-
     if (rank == RANK_ROOT) {
         free(Ax);
         free(A);
         free(b);
-
         vector_print(x, N);
         printf("time = %.5f\n", global_time);
     }
