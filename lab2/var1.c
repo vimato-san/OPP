@@ -41,12 +41,16 @@ void vector_mult_scalar(const double *vector, double scalar, double *dest, size_
 
 
 void vector_mult_matrix(const double *vector, const double *matrix, double *result, size_t N) {
-    #pragma omp parallel for
-    for (int i = 0; i < N; i++) {
-        double sum = 0;
-        for (int j = 0; j < N; j++)
-            sum += matrix[i * N + j] * vector[j];
-        result[i] = sum;
+    omp_set_num_threads(12);
+    #pragma omp parallel
+    {
+        #pragma omp for
+        for (int i = 0; i < N; i++) {
+            double sum = 0;
+            for (int j = 0; j < N; j++)
+                sum += matrix[i * N + j] * vector[j];
+            result[i] = sum;
+        }
     }
 }
 
@@ -80,7 +84,6 @@ int main(int argc, char *argv[]) {
     double *x = (double *)malloc(sizeof(double) * N);
     double *Ax = (double *)malloc(sizeof(double) * N);
     double *b = (double *)malloc(sizeof(double) * N);
-
 
     init_matrices(A, b, x, N);
     double time_begin = omp_get_wtime();
